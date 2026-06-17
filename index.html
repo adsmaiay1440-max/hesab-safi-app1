@@ -1850,5 +1850,566 @@ document.addEventListener('keydown',(e)=>{if(e.key==='Enter')addEntry();});
 })();
 </script>
 
+
+<style id="record-edit-patch-v1">
+  .date-time-card{margin:12px 0 6px;padding:12px 14px;border:1px solid rgba(150,120,80,.16);border-radius:16px;background:linear-gradient(180deg,#fffdf9,#f6efe4)}
+  .date-time-title{font-size:13px;font-weight:800;color:#5b4630;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+  .date-time-grid{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:center}
+  .date-time-grid input{width:100%;padding:11px 12px;border-radius:12px;border:1px solid var(--border,#d8cbb6);background:#fff;font-family:'Cairo',sans-serif;color:#3d2d1e;font-size:14px}
+  .date-time-grid .mini-btn{white-space:nowrap;height:44px}
+  .edit-btn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border:none;border-radius:12px;background:linear-gradient(135deg,#fff3e0,#ffe0b2);color:#8d4f00;cursor:pointer;font-size:16px;margin-inline-end:8px;box-shadow:0 6px 14px rgba(141,79,0,.12)}
+  .edit-btn:hover{transform:translateY(-1px)}
+  .record-actions{display:flex;align-items:center}
+  .editor-overlay{position:fixed;inset:0;background:rgba(28,19,8,.45);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;padding:16px;z-index:9999}
+  .editor-overlay.show{display:flex}
+  .editor-card{width:min(520px,100%);background:#fffdf9;border-radius:24px;box-shadow:0 20px 50px rgba(0,0,0,.18);padding:18px;border:1px solid rgba(120,90,52,.12)}
+  .editor-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+  .editor-title{font-size:19px;font-weight:900;color:#4a3621}
+  .editor-close{border:none;background:#f4eadc;color:#7a5a37;width:38px;height:38px;border-radius:12px;cursor:pointer;font-size:18px}
+  .editor-body{display:grid;gap:12px}
+  .editor-field label{display:block;font-size:13px;font-weight:800;color:#6d5436;margin-bottom:6px}
+  .editor-field input,.editor-field textarea{width:100%;padding:12px 13px;border-radius:14px;border:1px solid var(--border,#d8cbb6);background:#fff;font-family:'Cairo',sans-serif;color:#3b2c1d;font-size:14px}
+  .editor-field textarea{min-height:92px;resize:vertical}
+  .editor-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:6px}
+  .editor-actions button{border:none;border-radius:14px;padding:12px 16px;font-family:'Cairo',sans-serif;font-weight:800;cursor:pointer}
+  .editor-save{background:linear-gradient(135deg,#2e7d32,#43a047);color:#fff}
+  .editor-cancel{background:#efe4d3;color:#6c4b24}
+  @media (max-width:640px){
+    .date-time-grid{grid-template-columns:1fr}
+    .editor-actions{flex-direction:column-reverse}
+    .editor-actions button{width:100%}
+  }
+</style>
+
+<div class="editor-overlay" id="recordEditorOverlay" aria-hidden="true">
+  <div class="editor-card" role="dialog" aria-modal="true" aria-labelledby="recordEditorTitle">
+    <div class="editor-head">
+      <div class="editor-title" id="recordEditorTitle">تعديل السجل</div>
+      <button type="button" class="editor-close" id="recordEditorCloseBtn">✕</button>
+    </div>
+    <div class="editor-body">
+      <div class="editor-field">
+        <label for="recordEditorAmount">المبلغ</label>
+        <input type="number" id="recordEditorAmount" min="0" step="0.01" inputmode="decimal">
+      </div>
+      <div class="editor-field">
+        <label for="recordEditorText">الوصف / المكان / الملاحظات</label>
+        <textarea id="recordEditorText" maxlength="180" placeholder="اكتب التعديل المطلوب"></textarea>
+      </div>
+      <div class="date-time-grid">
+        <div class="editor-field" style="margin:0">
+          <label for="recordEditorDate">التاريخ</label>
+          <input type="date" id="recordEditorDate">
+        </div>
+        <div class="editor-field" style="margin:0">
+          <label for="recordEditorTime">الوقت</label>
+          <input type="time" id="recordEditorTime">
+        </div>
+        <button type="button" class="mini-btn" id="recordEditorTodayBtn" style="align-self:end">اليوم</button>
+      </div>
+      <div class="editor-actions">
+        <button type="button" class="editor-cancel" id="recordEditorCancelBtn">إلغاء</button>
+        <button type="button" class="editor-save" id="recordEditorSaveBtn">حفظ التعديل</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const state={kind:null,id:null};
+  function pad(n){return String(n).padStart(2,'0');}
+  function nowParts(){
+    const now=new Date();
+    return {date:`${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`,time:`${pad(now.getHours())}:${pad(now.getMinutes())}`};
+  }
+  function setInputsToNow(dateEl,timeEl){
+    const p=nowParts();
+    if(dateEl) dateEl.value=p.date;
+    if(timeEl) timeEl.value=p.time;
+  }
+  function parseDateTime(dateStr,timeStr){
+    const pDate=String(dateStr||'').split('-').map(Number);
+    const pTime=String(timeStr||'').split(':').map(Number);
+    if(pDate.length!==3 || pDate.some(n=>!Number.isFinite(n))) return new Date();
+    const hh=Number.isFinite(pTime[0])?pTime[0]:new Date().getHours();
+    const mm=Number.isFinite(pTime[1])?pTime[1]:new Date().getMinutes();
+    return new Date(pDate[0],(pDate[1]||1)-1,pDate[2]||1,hh,mm,0,0);
+  }
+  function fmtDateAr(dt){
+    return dt.toLocaleDateString('ar-SA',{year:'numeric',month:'long',day:'numeric'});
+  }
+  function fmtTimeAr(dt){
+    return dt.toLocaleTimeString('ar-SA',{hour:'2-digit',minute:'2-digit'});
+  }
+  function monthKey(dt){
+    return `${dt.getFullYear()}-${dt.getMonth()+1}`;
+  }
+  function extractDateTimeInputs(record){
+    const dateInput=document.getElementById('recordEditorDate');
+    const timeInput=document.getElementById('recordEditorTime');
+    const current=nowParts();
+    if(!record){
+      setInputsToNow(dateInput,timeInput);
+      return;
+    }
+    let parsed=new Date();
+    const joined=`${record.date||''} ${record.time||''}`.trim();
+    try{
+      const tryDate=new Date(joined);
+      if(!isNaN(tryDate.getTime())) parsed=tryDate;
+    }catch(_){ }
+    dateInput.value=`${parsed.getFullYear()}-${pad(parsed.getMonth()+1)}-${pad(parsed.getDate())}`;
+    timeInput.value=`${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+    if(!dateInput.value) dateInput.value=current.date;
+    if(!timeInput.value) timeInput.value=current.time;
+  }
+  function refreshViews(){
+    if(typeof window.updateTopSummary==='function') window.updateTopSummary();
+    if(typeof window.updateMonthTotals==='function') window.updateMonthTotals();
+    if(typeof window.renderHistory==='function') window.renderHistory();
+  }
+  function ensureEntryDateControls(){
+    const amountBox=document.getElementById('amountBox');
+    if(!amountBox || document.getElementById('entryDateInput')) return;
+    const card=document.createElement('div');
+    card.className='date-time-card';
+    card.innerHTML=`
+      <div class="date-time-title">📅 تحديد التاريخ والوقت للسجل</div>
+      <div class="date-time-grid">
+        <input type="date" id="entryDateInput" aria-label="تاريخ السجل">
+        <input type="time" id="entryTimeInput" aria-label="وقت السجل">
+        <button type="button" class="mini-btn" id="entryTodayBtn">اليوم</button>
+      </div>`;
+    amountBox.insertAdjacentElement('afterend',card);
+    setInputsToNow(document.getElementById('entryDateInput'),document.getElementById('entryTimeInput'));
+    document.getElementById('entryTodayBtn').addEventListener('click',()=>setInputsToNow(document.getElementById('entryDateInput'),document.getElementById('entryTimeInput')));
+  }
+  function ensureSettlementDateControls(){
+    const settlementInput=document.getElementById('companySettlementInput');
+    if(!settlementInput || document.getElementById('settlementDateInput')) return;
+    const host=settlementInput.closest('.card') || settlementInput.parentElement;
+    if(!host) return;
+    const row=document.createElement('div');
+    row.className='date-time-card';
+    row.style.marginTop='10px';
+    row.style.marginBottom='12px';
+    row.innerHTML=`
+      <div class="date-time-title">🗓️ تاريخ تسليم نصيب الشركة</div>
+      <div class="date-time-grid">
+        <input type="date" id="settlementDateInput" aria-label="تاريخ التسليم">
+        <input type="time" id="settlementTimeInput" aria-label="وقت التسليم">
+        <button type="button" class="mini-btn" id="settlementTodayBtn">اليوم</button>
+      </div>`;
+    const button=host.querySelector('.settlement-btn');
+    if(button && button.parentElement){
+      button.parentElement.insertAdjacentElement('afterend',row);
+    } else {
+      host.appendChild(row);
+    }
+    setInputsToNow(document.getElementById('settlementDateInput'),document.getElementById('settlementTimeInput'));
+    document.getElementById('settlementTodayBtn').addEventListener('click',()=>setInputsToNow(document.getElementById('settlementDateInput'),document.getElementById('settlementTimeInput')));
+  }
+  function closeEditor(){
+    const overlay=document.getElementById('recordEditorOverlay');
+    if(!overlay) return;
+    overlay.classList.remove('show');
+    overlay.setAttribute('aria-hidden','true');
+    state.kind=null; state.id=null;
+  }
+  function openEditor(title,payload){
+    const overlay=document.getElementById('recordEditorOverlay');
+    if(!overlay) return;
+    state.kind=payload.kind;
+    state.id=payload.id;
+    document.getElementById('recordEditorTitle').textContent=title;
+    document.getElementById('recordEditorAmount').value=Number(payload.amount||0);
+    document.getElementById('recordEditorText').value=payload.text||'';
+    if(payload.dateInput) document.getElementById('recordEditorDate').value=payload.dateInput;
+    if(payload.timeInput) document.getElementById('recordEditorTime').value=payload.timeInput;
+    else extractDateTimeInputs();
+    overlay.classList.add('show');
+    overlay.setAttribute('aria-hidden','false');
+  }
+  function guessRecordText(r){
+    if(!r) return '';
+    if(r.type==='income') return String(r.location||r.detail||'').trim();
+    return String(r.detail||'').trim();
+  }
+  function toInputValuesFromRecord(record){
+    const current=nowParts();
+    try{
+      const dt=parseDateTime(current.date,current.time);
+      const recDate=String(record.date||'').trim();
+      const recTime=String(record.time||'').trim();
+      let date=current.date,time=current.time;
+      const m=recDate.match(/(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/);
+      if(m){
+        date=`${m[1]}-${pad(m[2])}-${pad(m[3])}`;
+      }
+      if(/^[0-2]?\d:\d{2}/.test(recTime)) time=recTime.slice(0,5);
+      return {date,time};
+    }catch(_){ return current; }
+  }
+  function decorateHistory(){
+    document.querySelectorAll('#historyList .record-item[id^="rec-"]').forEach(card=>{
+      if(card.querySelector('.edit-btn[data-kind="record"]')) return;
+      const id=String(card.id||'').replace('rec-','');
+      const actions=card.querySelector('.rec-right');
+      if(!actions) return;
+      const btn=document.createElement('button');
+      btn.type='button';
+      btn.className='edit-btn';
+      btn.dataset.kind='record';
+      btn.title='تعديل السجل';
+      btn.textContent='✏️';
+      btn.addEventListener('click',function(e){
+        e.preventDefault();
+        e.stopPropagation();
+        const records=typeof getRecords==='function'?getRecords():[];
+        const record=records.find(r=>String(r.id)===String(id));
+        if(!record) return;
+        const inp=toInputValuesFromRecord(record);
+        openEditor('تعديل السجل',{
+          kind:'record',
+          id:id,
+          amount:record.amount,
+          text:guessRecordText(record),
+          dateInput:inp.date,
+          timeInput:inp.time
+        });
+      });
+      actions.insertBefore(btn,actions.lastElementChild);
+    });
+    document.querySelectorAll('#companySettlementHistory .record-item[id^="stl-"]').forEach(card=>{
+      if(card.querySelector('.edit-btn[data-kind="settlement"]')) return;
+      const id=String(card.id||'').replace('stl-','');
+      const actions=card.querySelector('.rec-right');
+      if(!actions) return;
+      const btn=document.createElement('button');
+      btn.type='button';
+      btn.className='edit-btn';
+      btn.dataset.kind='settlement';
+      btn.title='تعديل التسليم';
+      btn.textContent='✏️';
+      btn.addEventListener('click',function(e){
+        e.preventDefault();
+        e.stopPropagation();
+        const list=typeof getCompanySettlements==='function'?getCompanySettlements():[];
+        const record=list.find(r=>String(r.id)===String(id));
+        if(!record) return;
+        const inp=toInputValuesFromRecord(record);
+        openEditor('تعديل تسليم نصيب الشركة',{
+          kind:'settlement',
+          id:id,
+          amount:record.amount,
+          text:String(record.note||''),
+          dateInput:inp.date,
+          timeInput:inp.time
+        });
+      });
+      actions.insertBefore(btn,actions.lastElementChild);
+    });
+  }
+
+  const prevAddEntry=typeof window.addEntry==='function'?window.addEntry.bind(window):null;
+  window.addEntry=function(){
+    ensureEntryDateControls();
+    const amount=parseFloat((document.getElementById('amountInput')||{}).value);
+    const errEl=document.getElementById('errorMsg');
+    if(isNaN(amount)||amount<=0){ if(errEl) errEl.classList.add('visible'); return; }
+    if(errEl){ errEl.classList.remove('visible'); errEl.textContent='⚠️ يرجى إدخال قيمة صحيحة أكبر من صفر'; }
+    if(window.currentMode==='expense' && !window.currentCat){
+      if(errEl){ errEl.textContent='⚠️ يرجى اختيار نوع المصروف أولاً'; errEl.classList.add('visible'); }
+      return;
+    }
+    const dt=parseDateTime((document.getElementById('entryDateInput')||{}).value,(document.getElementById('entryTimeInput')||{}).value);
+    const record={
+      id:Date.now(),
+      type:window.currentMode,
+      cat:window.currentMode==='expense'?window.currentCat:'income',
+      catLabel:window.currentMode==='expense'?(window.CAT_LABELS&&window.CAT_LABELS[window.currentCat]?window.CAT_LABELS[window.currentCat]:'📤 مصروف'):'💵 دخل',
+      catAr:window.currentMode==='expense'?(window.CAT_AR&&window.CAT_AR[window.currentCat]?window.CAT_AR[window.currentCat]:'مصروف'):'إيراد عام',
+      detail:window.currentCat==='other' ? String((document.getElementById('otherDetail')||{}).value||'').trim() : '',
+      amount:amount,
+      date:fmtDateAr(dt),
+      time:fmtTimeAr(dt),
+      month:monthKey(dt)
+    };
+    const records=typeof getRecords==='function'?getRecords():[];
+    records.unshift(record);
+    if(typeof saveRecords==='function') saveRecords(records);
+    refreshViews();
+    if(typeof clearValue==='function') clearValue();
+    if(typeof showToast==='function') showToast(window.currentMode==='income'?'✅ تم تسجيل الدخل بالتاريخ المحدد':'✅ تم تسجيل المصروف بالتاريخ المحدد');
+  };
+
+  const prevAddCompanySettlement=typeof window.addCompanySettlement==='function'?window.addCompanySettlement.bind(window):null;
+  window.addCompanySettlement=function(){
+    ensureSettlementDateControls();
+    const input=document.getElementById('companySettlementInput');
+    const amount=parseFloat(input?input.value:'');
+    if(isNaN(amount)||amount<=0){
+      if(typeof showToast==='function') showToast('⚠️ اكتب مبلغ تسليم صحيح أكبر من صفر','linear-gradient(135deg,#e65100,#bf360c)');
+      return;
+    }
+    const dt=parseDateTime((document.getElementById('settlementDateInput')||{}).value,(document.getElementById('settlementTimeInput')||{}).value);
+    const record={
+      id:Date.now(),
+      amount:amount,
+      date:fmtDateAr(dt),
+      time:fmtTimeAr(dt),
+      month:monthKey(dt),
+      note:'',
+      kind:'company_settlement'
+    };
+    const list=typeof getCompanySettlements==='function'?getCompanySettlements():[];
+    list.unshift(record);
+    if(typeof saveCompanySettlements==='function') saveCompanySettlements(list);
+    if(input) input.value='';
+    refreshViews();
+    if(typeof showToast==='function') showToast('🏢 تم تسجيل التسليم بالتاريخ المحدد','linear-gradient(135deg,#6a1b9a,#7b1fa2)');
+  };
+
+  const prevRenderHistory=typeof window.renderHistory==='function'?window.renderHistory.bind(window):null;
+  window.renderHistory=function(){
+    if(prevRenderHistory) prevRenderHistory();
+    decorateHistory();
+  };
+
+  function saveEditorChanges(){
+    const amount=parseFloat(document.getElementById('recordEditorAmount').value);
+    if(isNaN(amount)||amount<=0){
+      if(typeof showToast==='function') showToast('⚠️ اكتب مبلغ صحيح أكبر من صفر','linear-gradient(135deg,#e65100,#bf360c)');
+      return;
+    }
+    const text=String(document.getElementById('recordEditorText').value||'').trim();
+    const dt=parseDateTime(document.getElementById('recordEditorDate').value,document.getElementById('recordEditorTime').value);
+    if(state.kind==='record'){
+      const records=typeof getRecords==='function'?getRecords():[];
+      const idx=records.findIndex(r=>String(r.id)===String(state.id));
+      if(idx<0) return closeEditor();
+      const rec={...records[idx]};
+      rec.amount=amount;
+      rec.date=fmtDateAr(dt);
+      rec.time=fmtTimeAr(dt);
+      rec.month=monthKey(dt);
+      if(rec.type==='income'){
+        rec.location=text;
+        rec.detail=text;
+        rec.catLabel='💵 دخل';
+        rec.catAr='إيراد عام';
+      } else {
+        rec.detail=text;
+      }
+      records[idx]=rec;
+      if(typeof saveRecords==='function') saveRecords(records);
+      refreshViews();
+      closeEditor();
+      if(typeof showToast==='function') showToast('✏️ تم تعديل السجل بنجاح','linear-gradient(135deg,#1565c0,#1e88e5)');
+      return;
+    }
+    if(state.kind==='settlement'){
+      const list=typeof getCompanySettlements==='function'?getCompanySettlements():[];
+      const idx=list.findIndex(r=>String(r.id)===String(state.id));
+      if(idx<0) return closeEditor();
+      const rec={...list[idx]};
+      rec.amount=amount;
+      rec.note=text;
+      rec.date=fmtDateAr(dt);
+      rec.time=fmtTimeAr(dt);
+      rec.month=monthKey(dt);
+      list[idx]=rec;
+      if(typeof saveCompanySettlements==='function') saveCompanySettlements(list);
+      refreshViews();
+      closeEditor();
+      if(typeof showToast==='function') showToast('✏️ تم تعديل عملية التسليم','linear-gradient(135deg,#6a1b9a,#8e24aa)');
+    }
+  }
+
+  function wireEditor(){
+    const overlay=document.getElementById('recordEditorOverlay');
+    const closeBtn=document.getElementById('recordEditorCloseBtn');
+    const cancelBtn=document.getElementById('recordEditorCancelBtn');
+    const saveBtn=document.getElementById('recordEditorSaveBtn');
+    const todayBtn=document.getElementById('recordEditorTodayBtn');
+    if(closeBtn) closeBtn.addEventListener('click',closeEditor);
+    if(cancelBtn) cancelBtn.addEventListener('click',closeEditor);
+    if(saveBtn) saveBtn.addEventListener('click',saveEditorChanges);
+    if(todayBtn) todayBtn.addEventListener('click',()=>setInputsToNow(document.getElementById('recordEditorDate'),document.getElementById('recordEditorTime')));
+    if(overlay) overlay.addEventListener('click',e=>{ if(e.target===overlay) closeEditor(); });
+  }
+
+  function init(){
+    ensureEntryDateControls();
+    ensureSettlementDateControls();
+    wireEditor();
+    decorateHistory();
+  }
+
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init,{once:true});
+  else init();
+})();
+</script>
+
+
+<script id="record-edit-patch-v2">
+(function(){
+  const COMPANY_SETTLEMENTS_KEY='hesab_v3_company_settlements';
+  function getRecordsSafe(){try{return JSON.parse(localStorage.getItem('hesab_v3_records')||'[]')}catch(_){return[]}}
+  function saveRecordsSafe(arr){localStorage.setItem('hesab_v3_records',JSON.stringify(arr||[])); if(typeof updateBadge==='function') updateBadge();}
+  function getSettlementsSafe(){try{return JSON.parse(localStorage.getItem(COMPANY_SETTLEMENTS_KEY)||'[]')}catch(_){return[]}}
+  function saveSettlementsSafe(arr){localStorage.setItem(COMPANY_SETTLEMENTS_KEY,JSON.stringify(arr||[]));}
+  function pad(n){return String(n).padStart(2,'0');}
+  function parseDateTime(dateStr,timeStr){
+    const d=String(dateStr||'').split('-').map(Number);
+    const t=String(timeStr||'').split(':').map(Number);
+    if(d.length!==3 || d.some(n=>!Number.isFinite(n))) return new Date();
+    return new Date(d[0],(d[1]||1)-1,d[2]||1,Number.isFinite(t[0])?t[0]:0,Number.isFinite(t[1])?t[1]:0,0,0);
+  }
+  function fmtDateAr(dt){return dt.toLocaleDateString('ar-SA',{year:'numeric',month:'long',day:'numeric'});}
+  function fmtTimeAr(dt){return dt.toLocaleTimeString('ar-SA',{hour:'2-digit',minute:'2-digit'});}
+  function monthKey(dt){return `${dt.getFullYear()}-${dt.getMonth()+1}`;}
+  function refreshViews(){
+    if(typeof window.updateTopSummary==='function') window.updateTopSummary();
+    if(typeof window.updateMonthTotals==='function') window.updateMonthTotals();
+    if(typeof window.renderHistory==='function') window.renderHistory();
+  }
+  function modeFromUI(){
+    const expense=document.getElementById('expenseBtn');
+    return expense && expense.classList.contains('expense-active') ? 'expense' : 'income';
+  }
+  function activeCatBtn(){return document.querySelector('.cat-btn.cat-active');}
+  function cleanText(text){return String(text||'').replace(/\s+/g,' ').trim();}
+  function labelFromCatButton(btn){return cleanText(btn ? btn.textContent : 'مصروف');}
+  function detailsFromInputs(mode){
+    if(mode==='income') return cleanText((document.getElementById('incomeLocationInput')||{}).value||'');
+    return cleanText((document.getElementById('otherDetail')||{}).value||'');
+  }
+
+  window.addEntry=function(){
+    const amount=parseFloat((document.getElementById('amountInput')||{}).value);
+    const errEl=document.getElementById('errorMsg');
+    if(isNaN(amount)||amount<=0){ if(errEl) errEl.classList.add('visible'); return; }
+    const mode=modeFromUI();
+    const catBtn=activeCatBtn();
+    const catKey=catBtn ? String(catBtn.id||'').replace('cat-','') : null;
+    if(mode==='expense' && !catKey){
+      if(errEl){ errEl.textContent='⚠️ يرجى اختيار نوع المصروف أولاً'; errEl.classList.add('visible'); }
+      return;
+    }
+    if(errEl){ errEl.classList.remove('visible'); errEl.textContent='⚠️ يرجى إدخال قيمة صحيحة أكبر من صفر'; }
+    const dt=parseDateTime((document.getElementById('entryDateInput')||{}).value,(document.getElementById('entryTimeInput')||{}).value);
+    const detail=detailsFromInputs(mode);
+    const catLabel=mode==='income' ? '💵 دخل' : labelFromCatButton(catBtn);
+    const record={
+      id:Date.now(),
+      type:mode,
+      cat:mode==='expense' ? (catKey||'other') : 'income',
+      catLabel:catLabel,
+      catAr:mode==='income' ? 'إيراد عام' : labelFromCatButton(catBtn),
+      detail:detail,
+      amount:amount,
+      date:fmtDateAr(dt),
+      time:fmtTimeAr(dt),
+      month:monthKey(dt)
+    };
+    if(mode==='income' && detail) record.location=detail;
+    const records=getRecordsSafe();
+    records.unshift(record);
+    saveRecordsSafe(records);
+    if(typeof clearValue==='function') clearValue();
+    refreshViews();
+    if(typeof showToast==='function') showToast(mode==='income'?'✅ تم تسجيل الدخل بالتاريخ المحدد':'✅ تم تسجيل المصروف بالتاريخ المحدد');
+  };
+
+  window.addCompanySettlement=function(){
+    const input=document.getElementById('companySettlementInput');
+    const amount=parseFloat(input?input.value:'');
+    if(isNaN(amount)||amount<=0){
+      if(typeof showToast==='function') showToast('⚠️ اكتب مبلغ تسليم صحيح أكبر من صفر','linear-gradient(135deg,#e65100,#bf360c)');
+      return;
+    }
+    const dt=parseDateTime((document.getElementById('settlementDateInput')||{}).value,(document.getElementById('settlementTimeInput')||{}).value);
+    const record={id:Date.now(),amount:amount,date:fmtDateAr(dt),time:fmtTimeAr(dt),month:monthKey(dt),note:'',kind:'company_settlement'};
+    const list=getSettlementsSafe();
+    list.unshift(record);
+    saveSettlementsSafe(list);
+    if(input) input.value='';
+    refreshViews();
+    if(typeof showToast==='function') showToast('🏢 تم تسجيل التسليم بالتاريخ المحدد','linear-gradient(135deg,#6a1b9a,#7b1fa2)');
+  };
+
+  window.openSettlementEditor=function(id){
+    const list=getSettlementsSafe();
+    const rec=list.find(r=>String(r.id)===String(id));
+    if(!rec) return;
+    const amountEl=document.getElementById('recordEditorAmount');
+    const textEl=document.getElementById('recordEditorText');
+    const dateEl=document.getElementById('recordEditorDate');
+    const timeEl=document.getElementById('recordEditorTime');
+    const titleEl=document.getElementById('recordEditorTitle');
+    const overlay=document.getElementById('recordEditorOverlay');
+    if(!amountEl||!textEl||!dateEl||!timeEl||!titleEl||!overlay) return;
+    amountEl.value=Number(rec.amount||0);
+    textEl.value=String(rec.note||'');
+    titleEl.textContent='تعديل تسليم نصيب الشركة';
+    if(!dateEl.value){
+      const now=new Date();
+      dateEl.value=`${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
+      timeEl.value=`${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    }
+    overlay.classList.add('show');
+    overlay.setAttribute('aria-hidden','false');
+    overlay.dataset.kind='settlement';
+    overlay.dataset.id=String(id);
+  };
+
+  const previousSaveBtn=document.getElementById('recordEditorSaveBtn');
+  if(previousSaveBtn && !previousSaveBtn.dataset.v2bound){
+    previousSaveBtn.dataset.v2bound='1';
+    previousSaveBtn.addEventListener('click',function(){
+      const overlay=document.getElementById('recordEditorOverlay');
+      if(!overlay || overlay.dataset.kind!=='settlement') return;
+      const amount=parseFloat((document.getElementById('recordEditorAmount')||{}).value);
+      if(isNaN(amount)||amount<=0) return;
+      const text=cleanText((document.getElementById('recordEditorText')||{}).value||'');
+      const dt=parseDateTime((document.getElementById('recordEditorDate')||{}).value,(document.getElementById('recordEditorTime')||{}).value);
+      const id=overlay.dataset.id;
+      const list=getSettlementsSafe();
+      const idx=list.findIndex(r=>String(r.id)===String(id));
+      if(idx<0) return;
+      list[idx]={...list[idx],amount:amount,note:text,date:fmtDateAr(dt),time:fmtTimeAr(dt),month:monthKey(dt)};
+      saveSettlementsSafe(list);
+      overlay.classList.remove('show');
+      overlay.setAttribute('aria-hidden','true');
+      delete overlay.dataset.kind;
+      delete overlay.dataset.id;
+      refreshViews();
+      if(typeof showToast==='function') showToast('✏️ تم تعديل عملية التسليم','linear-gradient(135deg,#6a1b9a,#8e24aa)');
+    });
+  }
+
+  const prevRender=typeof window.renderHistory==='function' ? window.renderHistory.bind(window) : null;
+  window.renderHistory=function(){
+    if(prevRender) prevRender();
+    document.querySelectorAll('#companySettlementHistory .record-item[id^="stl-"]').forEach(card=>{
+      const id=String(card.id||'').replace('stl-','');
+      const actions=card.querySelector('.rec-right');
+      if(!actions || actions.querySelector('.edit-btn[data-kind="settlement-fixed"]')) return;
+      const btn=document.createElement('button');
+      btn.type='button';
+      btn.className='edit-btn';
+      btn.dataset.kind='settlement-fixed';
+      btn.textContent='✏️';
+      btn.title='تعديل التسليم';
+      btn.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();window.openSettlementEditor(id);});
+      actions.insertBefore(btn,actions.lastElementChild);
+    });
+  };
+})();
+</script>
+
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body></html>
