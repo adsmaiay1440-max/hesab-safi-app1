@@ -150,6 +150,26 @@
     .net-big.positive{color:var(--green)}
     .net-big.negative{color:var(--red)}
     .net-currency-label{font-size:17px;font-weight:700;color:var(--text2)}
+    .month-nav{
+      display:flex;align-items:center;justify-content:center;gap:10px;
+      margin-bottom:12px;
+    }
+    .month-nav-arrow{
+      width:30px;height:30px;border-radius:50%;
+      background:rgba(106,27,154,0.12);border:1px solid rgba(106,27,154,0.3);
+      color:var(--purple);font-size:16px;font-weight:900;line-height:1;
+      display:flex;align-items:center;justify-content:center;cursor:pointer;
+      transition:background .15s,transform .1s;flex-shrink:0;
+    }
+    .month-nav-arrow:active{transform:scale(0.92)}
+    .month-nav-arrow:hover{background:rgba(106,27,154,0.22)}
+    .month-nav-arrow:disabled{opacity:0.3;cursor:not-allowed;background:rgba(106,27,154,0.06)}
+    .month-nav-label{
+      display:inline-block;padding:5px 16px;
+      background:rgba(106,27,154,0.1);border:1px solid rgba(106,27,154,0.25);
+      border-radius:30px;font-size:12px;font-weight:700;color:var(--purple);
+      white-space:nowrap;
+    }
     .shares-row{
       display:grid;grid-template-columns:1fr 1px 1fr;
       margin-top:14px;padding-top:14px;
@@ -531,7 +551,11 @@
 
     <!-- Summary Top -->
     <div class="card summary-top-card">
-      <div class="summary-top-btn">📅 صافي أرباح هذا الشهر</div>
+      <div class="month-nav">
+        <button type="button" class="month-nav-arrow" id="monthNavPrev" onclick="changeViewedMonth(-1)" aria-label="الشهر السابق" title="الشهر السابق">‹</button>
+        <div class="month-nav-label" id="monthNavLabel">📅 صافي أرباح شهر يوليو</div>
+        <button type="button" class="month-nav-arrow" id="monthNavNext" onclick="changeViewedMonth(1)" aria-label="الشهر التالي" title="الشهر التالي">›</button>
+      </div>
       <div>
         <span class="net-big" id="topNet">٠٫٠٠</span>
         <span class="net-currency-label"> ريال</span>
@@ -940,10 +964,40 @@ function getRecords(){try{return JSON.parse(localStorage.getItem('hesab_v3_recor
 function saveRecords(arr){localStorage.setItem('hesab_v3_records',JSON.stringify(arr));updateBadge()}
 function updateBadge(){document.getElementById('histBadge').textContent=getRecords().length}
 
+/* ===== MONTH NAVIGATION STATE ===== */
+let viewedMonthDate=new Date();
+viewedMonthDate.setDate(1);
+function getViewedMonthKey(){
+  return viewedMonthDate.getFullYear()+'-'+(viewedMonthDate.getMonth()+1);
+}
+function isViewedMonthCurrent(){
+  const now=new Date();
+  return viewedMonthDate.getFullYear()===now.getFullYear() && viewedMonthDate.getMonth()===now.getMonth();
+}
+function changeViewedMonth(delta){
+  const now=new Date();
+  const target=new Date(viewedMonthDate.getFullYear(), viewedMonthDate.getMonth()+delta, 1);
+  const targetIsFuture = target.getFullYear()>now.getFullYear() ||
+    (target.getFullYear()===now.getFullYear() && target.getMonth()>now.getMonth());
+  if(targetIsFuture) return; // لا نسمح بالانتقال لشهر لم يأتِ بعد
+  viewedMonthDate=target;
+  updateTopSummary(); updateMonthTotals();
+  if(typeof syncCompanySettlementUI==='function') syncCompanySettlementUI();
+}
+function updateMonthNavUI(){
+  const label=document.getElementById('monthNavLabel');
+  const nextBtn=document.getElementById('monthNavNext');
+  if(label){
+    const monthName=viewedMonthDate.toLocaleDateString('ar-SA',{month:'long',year:'numeric'});
+    label.textContent='📅 صافي أرباح شهر '+monthName;
+  }
+  if(nextBtn) nextBtn.disabled=isViewedMonthCurrent();
+}
+
 /* ===== SUMMARY ===== */
 function updateTopSummary(){
-  const recs=getRecords(), now=new Date();
-  const cm=now.getFullYear()+'-'+(now.getMonth()+1);
+  const recs=getRecords();
+  const cm=getViewedMonthKey();
   let tI=0,tE=0;
   recs.forEach(r=>{if(r.month!==cm)return;if(r.type==='income')tI+=r.amount;else tE+=r.amount;});
   const net=tI-tE, d=net>0?net/3:0, c=net>0?(net*2)/3:0;
@@ -952,10 +1006,11 @@ function updateTopSummary(){
   el.className='net-big'+(net<0?' negative':net>0?' positive':'');
   document.getElementById('topDriver').textContent=fmt(d);
   document.getElementById('topCompany').textContent=fmt(c);
+  updateMonthNavUI();
 }
 function updateMonthTotals(){
-  const recs=getRecords(), now=new Date();
-  const cm=now.getFullYear()+'-'+(now.getMonth()+1);
+  const recs=getRecords();
+  const cm=getViewedMonthKey();
   let tI=0,tE=0;
   recs.forEach(r=>{if(r.month!==cm)return;if(r.type==='income')tI+=r.amount;else tE+=r.amount;});
   document.getElementById('monthIncome').textContent=fmt(tI);
@@ -1030,7 +1085,7 @@ function showToast(msg,bg){
 
 /* ===== Helper for Monthly Records ===== */
 function getMonthRecords(){
-  const now=new Date(),cm=now.getFullYear()+'-'+(now.getMonth()+1);
+  const cm=getViewedMonthKey();
   return getRecords().filter(r=>r.month===cm);
 }
 
@@ -1050,8 +1105,8 @@ function printMonthlyReport(){
     recs.forEach(r=>{if(r.type==='income')tI+=r.amount;else tE+=r.amount;});
     const tN=tI-tE,d=tN>0?tN/3:0,c=tN>0?(tN*2)/3:0;
 
-    const monthNameAr=now.toLocaleDateString('ar-SA',{year:'numeric',month:'long'});
-    const monthNameEn=now.toLocaleDateString('en-US',{year:'numeric',month:'long'});
+    const monthNameAr=viewedMonthDate.toLocaleDateString('ar-SA',{year:'numeric',month:'long'});
+    const monthNameEn=viewedMonthDate.toLocaleDateString('en-US',{year:'numeric',month:'long'});
     const printDate=now.toLocaleDateString('ar-SA',{year:'numeric',month:'long',day:'numeric',weekday:'long'});
     const printDateEn=now.toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric',weekday:'long'});
 
@@ -1553,7 +1608,7 @@ document.addEventListener('keydown',(e)=>{if(e.key==='Enter')addEntry();});
     if(input && !input.value && list[0]) input.placeholder=`مثال: ${list[0]}`;
   }
   function getCurrentMonthPaid(){
-    const cm=getMonthKey(new Date());
+    const cm=typeof getViewedMonthKey==='function'?getViewedMonthKey():getMonthKey(new Date());
     return getCompanySettlements().filter(r=>r.month===cm).reduce((sum,r)=>sum+Number(r.amount||0),0);
   }
   function getCompanyGrossFromDom(){
@@ -1594,7 +1649,7 @@ document.addEventListener('keydown',(e)=>{if(e.key==='Enter')addEntry();});
     }
     const histCount=document.getElementById('companyHistoryCount');
     if(histCount){
-      const cm=getMonthKey(new Date());
+      const cm=typeof getViewedMonthKey==='function'?getViewedMonthKey():getMonthKey(new Date());
       histCount.textContent=String(getCompanySettlements().filter(r=>r.month===cm).length).replace(/\d/g,d=>'٠١٢٣٤٥٦٧٨٩'[d]);
     }
   }
