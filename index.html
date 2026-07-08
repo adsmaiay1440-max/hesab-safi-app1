@@ -600,9 +600,9 @@
       <div id="catSection" style="display:none">
         <div class="section-mini-title">🎨 اختر القسم الرئيسي للمصروف</div>
         <div class="expense-group-tabs" id="expenseGroupTabs">
-          <button type="button" class="expense-group-btn group-car" data-group="car">🚚 السيارة</button>
-          <button type="button" class="expense-group-btn group-fathi" data-group="fathi">🧑 فتحي</button>
-          <button type="button" class="expense-group-btn group-basheer active" data-group="basheer">🏢 بشير</button>
+          <button type="button" class="expense-group-btn group-car" data-group="car" onclick="selectGroup('car')">🚚 السيارة</button>
+          <button type="button" class="expense-group-btn group-fathi" data-group="fathi" onclick="selectGroup('fathi')">🧑 فتحي</button>
+          <button type="button" class="expense-group-btn group-basheer active" data-group="basheer" onclick="selectGroup('basheer')">🏢 بشير</button>
         </div>
         <div class="section-mini-title">🧾 نوع المصروف</div>
       
@@ -683,6 +683,13 @@
         <button class="action-btn btn-reset-all" onclick="resetAllData()">
           <span class="btn-icon">🔄</span>مسح جميع البيانات
         </button>
+        <button class="action-btn btn-print" onclick="exportBackupToFile()">
+          <span class="btn-icon">📤</span>تصدير نسخة احتياطية
+        </button>
+        <button class="action-btn btn-print" onclick="document.getElementById('importBackupInput').click()">
+          <span class="btn-icon">📥</span>استيراد نسخة احتياطية
+        </button>
+        <input type="file" id="importBackupInput" accept="application/json,.json" style="display:none" onchange="importBackupFromFile(event)">
       </div>
           <div class="card alert-card" id="alertCard">
             <div class="section-mini-title">🔔 التنبيهات اليومية</div>
@@ -880,11 +887,20 @@
 
 <script>
 /* ===== STATE ===== */
-let currentMode='income', currentCat=null;
+let currentMode='income', currentCat=null, currentGroup='basheer';
 const CAT_LABELS={diesel:'⛽ ديزل',oil:'🛢️ زيت',maint:'🔧 صيانة',living:'🏠 معيشة',other:'➕ أخرى'};
 const CAT_AR={diesel:'ديزل',oil:'زيت',maint:'صيانة',living:'المعيشة',other:'أخرى'};
+const GROUP_LABELS={car:'🚚 السيارة',fathi:'🧑 فتحي',basheer:'🏢 بشير'};
 
 function fmt(n){return n.toLocaleString('ar-SA',{minimumFractionDigits:2,maximumFractionDigits:2})}
+
+/* ===== EXPENSE GROUP ===== */
+function selectGroup(group){
+  currentGroup=group;
+  document.querySelectorAll('.expense-group-btn').forEach(b=>b.classList.remove('active'));
+  const btn=document.querySelector('.expense-group-btn.group-'+group);
+  if(btn) btn.classList.add('active');
+}
 
 /* ===== MODE ===== */
 function setMode(mode){
@@ -930,8 +946,9 @@ function addEntry(){
   const record={
     id:Date.now(), type:currentMode,
     cat:currentMode==='expense'?currentCat:'income',
-    catLabel:currentMode==='expense'?CAT_LABELS[currentCat]:'💵 دخل',
+    catLabel:currentMode==='expense'?(GROUP_LABELS[currentGroup]+' / '+CAT_LABELS[currentCat]):'💵 دخل',
     catAr:currentMode==='expense'?CAT_AR[currentCat]:'إيراد عام',
+    expenseGroup:currentMode==='expense'?currentGroup:undefined,
     detail:currentCat==='other'?document.getElementById('otherDetail').value.trim():'',
     amount:amount,
     date:now.toLocaleDateString('ar-SA',{year:'numeric',month:'long',day:'numeric'}),
@@ -963,6 +980,62 @@ function resetAllData(){
 function getRecords(){try{return JSON.parse(localStorage.getItem('hesab_v3_records')||'[]')}catch{return[]}}
 function saveRecords(arr){localStorage.setItem('hesab_v3_records',JSON.stringify(arr));updateBadge()}
 function updateBadge(){document.getElementById('histBadge').textContent=getRecords().length}
+
+/* ===== BACKUP EXPORT / IMPORT ===== */
+function getBackupStorageKeys(){
+  const prefix=(typeof loadFromFirebase==='function')?'hesab_auth_v6':'hesab_light_v6';
+  return {
+    records:'hesab_v3_records',
+    settlements:'hesab_v3_company_settlements',
+    locations:prefix+'_saved_locations'
+  };
+}
+function exportBackupToFile(){
+  try{
+    const keys=getBackupStorageKeys();
+    const data={
+      version:1,
+      exportedAt:new Date().toISOString(),
+      records:JSON.parse(localStorage.getItem(keys.records)||'[]'),
+      companySettlements:JSON.parse(localStorage.getItem(keys.settlements)||'[]'),
+      savedLocations:JSON.parse(localStorage.getItem(keys.locations)||'[]')
+    };
+    const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const now=new Date();
+    const stamp=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
+    const a=document.createElement('a');
+    a.href=url; a.download='hesab_backup_'+stamp+'.json';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    if(typeof showToast==='function') showToast('📤 تم تصدير النسخة الاحتياطية بنجاح');
+  }catch(e){
+    if(typeof showToast==='function') showToast('⚠️ فشل التصدير','linear-gradient(135deg,#e65100,#bf360c)');
+    else alert('فشل التصدير: '+e.message);
+  }
+}
+function importBackupFromFile(event){
+  const file=event.target.files&&event.target.files[0];
+  if(!file) return;
+  const reader=new FileReader();
+  reader.onload=function(){
+    try{
+      const data=JSON.parse(reader.result);
+      if(!data||typeof data!=='object') throw new Error('invalid');
+      const keys=getBackupStorageKeys();
+      if(Array.isArray(data.records)) localStorage.setItem(keys.records,JSON.stringify(data.records));
+      if(Array.isArray(data.companySettlements)) localStorage.setItem(keys.settlements,JSON.stringify(data.companySettlements));
+      if(Array.isArray(data.savedLocations)) localStorage.setItem(keys.locations,JSON.stringify(data.savedLocations));
+      if(typeof showToast==='function') showToast('📥 تم الاستيراد، جارٍ إعادة التحميل...','linear-gradient(135deg,#2e7d32,#388e3c)');
+      setTimeout(()=>location.reload(),700);
+    }catch(e){
+      if(typeof showToast==='function') showToast('⚠️ ملف النسخة الاحتياطية غير صالح','linear-gradient(135deg,#e65100,#bf360c)');
+      else alert('ملف غير صالح');
+    }
+    event.target.value='';
+  };
+  reader.readAsText(file);
+}
 
 /* ===== MONTH NAVIGATION STATE ===== */
 let viewedMonthDate=new Date();
@@ -1011,10 +1084,22 @@ function updateTopSummary(){
 function updateMonthTotals(){
   const recs=getRecords();
   const cm=getViewedMonthKey();
-  let tI=0,tE=0;
-  recs.forEach(r=>{if(r.month!==cm)return;if(r.type==='income')tI+=r.amount;else tE+=r.amount;});
+  let tI=0,tE=0,gCar=0,gFathi=0,gBasheer=0;
+  recs.forEach(r=>{
+    if(r.month!==cm)return;
+    if(r.type==='income'){tI+=r.amount;return}
+    tE+=r.amount;
+    const g=r.expenseGroup||'basheer';
+    if(g==='car')gCar+=r.amount;
+    else if(g==='fathi')gFathi+=r.amount;
+    else gBasheer+=r.amount;
+  });
   document.getElementById('monthIncome').textContent=fmt(tI);
   document.getElementById('monthExpense').textContent=fmt(tE);
+  const bc=document.getElementById('breakCar'), bf=document.getElementById('breakFathi'), bb=document.getElementById('breakBasheer');
+  if(bc)bc.textContent=fmt(gCar);
+  if(bf)bf.textContent=fmt(gFathi);
+  if(bb)bb.textContent=fmt(gBasheer);
 }
 
 /* ===== TABS ===== */
